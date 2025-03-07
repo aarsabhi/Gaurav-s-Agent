@@ -5,7 +5,7 @@ import emoji
 import os
 from dotenv import load_dotenv
 import json
-from tavily import TavilyClient
+from tavily.client import Client as TavilyClient
 import validators
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
