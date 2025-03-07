@@ -11,6 +11,12 @@ load_dotenv()
 AZURE_API_KEY = os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d")
 AZURE_ENDPOINT = os.environ.get("AZURE_ENDPOINT", "https://idpoai.openai.azure.com")
 
+# Configure OpenAI
+openai.api_type = "azure"
+openai.api_key = AZURE_API_KEY
+openai.api_base = AZURE_ENDPOINT
+openai.api_version = "2023-05-15"
+
 # Page configuration
 st.set_page_config(
     page_title="LinkedIn Post Generator",
@@ -36,12 +42,6 @@ st.markdown("""
 def generate_linkedin_post(prompt, tone="professional"):
     """Generate LinkedIn post using Azure OpenAI"""
     try:
-        client = openai.AzureOpenAI(
-            api_key=AZURE_API_KEY,
-            api_version="2023-05-15",
-            azure_endpoint=AZURE_ENDPOINT
-        )
-
         system_prompt = f"""You are a professional LinkedIn content creator. 
         Create an engaging post with:
         - 3-4 concise paragraphs
@@ -49,17 +49,17 @@ def generate_linkedin_post(prompt, tone="professional"):
         - 3-5 relevant hashtags
         Make it engaging while maintaining professionalism."""
 
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Create a LinkedIn post about: {prompt}"}
-            ],
+        response = openai.Completion.create(
+            engine="gpt-4",
+            prompt=f"System: {system_prompt}\n\nUser: Create a LinkedIn post about: {prompt}",
             temperature=0.7,
-            max_tokens=500
+            max_tokens=500,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
         )
         
-        return response.choices[0].message.content
+        return response.choices[0].text.strip()
     except Exception as e:
         return f"Error generating post: {str(e)}"
 
