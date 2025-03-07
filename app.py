@@ -9,12 +9,13 @@ from tavily import TavilyClient
 import validators
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
+import requests
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Tavily client
-tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY", "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"))
+# Initialize Tavily API key
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "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")
 
 # Page configuration
 st.set_page_config(
@@ -332,22 +333,31 @@ def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent
 def tavily_search(query, max_results=5):
     """Perform web search using Tavily API"""
     try:
-        # Perform the search with Tavily
-        search_result = tavily.search(
-            query=query,
-            search_depth="advanced",
-            max_results=max_results
+        headers = {
+            "Authorization": f"Bearer {TAVILY_API_KEY}"
+        }
+        payload = {
+            "query": query,
+            "search_depth": "advanced",
+            "max_results": max_results
+        }
+        response = requests.post(
+            "https://api.tavily.com/search",
+            json=payload,
+            headers=headers
         )
+        search_result = response.json()
         
         # Format the results
         formatted_results = []
-        for result in search_result['results'][:max_results]:
-            formatted_results.append({
-                'title': result['title'],
-                'description': result['content'],
-                'url': result['url'],
-                'date': result.get('published_date', 'Recent')
-            })
+        if 'results' in search_result:
+            for result in search_result['results'][:max_results]:
+                formatted_results.append({
+                    'title': result.get('title', ''),
+                    'description': result.get('content', ''),
+                    'url': result.get('url', ''),
+                    'date': result.get('published_date', 'Recent')
+                })
         
         return formatted_results
     except Exception as e:
