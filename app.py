@@ -8,8 +8,8 @@ import requests
 load_dotenv()
 
 # Initialize API keys
-AZURE_API_KEY = os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d")
-AZURE_ENDPOINT = os.environ.get("AZURE_ENDPOINT", "https://idpoai.openai.azure.com")
+AZURE_API_KEY = os.getenv("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d")
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://idpoai.openai.azure.com")
 
 # Configure OpenAI
 openai.api_type = "azure"
@@ -36,6 +36,9 @@ st.markdown("""
         font-weight: 600;
         width: 100%;
     }
+    .stTextArea>div>div>textarea {
+        background-color: #f3f6f9;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -43,9 +46,12 @@ def generate_linkedin_post(prompt, tone="professional"):
     """Generate LinkedIn post using Azure OpenAI"""
     try:
         system_prompt = f"""You are a professional LinkedIn content creator. 
-        Create an engaging post with:
+        Create an engaging post with the following tone: {tone}
+        Include:
         - 3-4 concise paragraphs
-        - Professional tone
+        - Engaging opening hook
+        - Professional insights
+        - Call to action
         - 3-5 relevant hashtags
         Make it engaging while maintaining professionalism."""
 
@@ -65,18 +71,37 @@ def generate_linkedin_post(prompt, tone="professional"):
 
 # Main content area
 st.title("🚀 LinkedIn Post Generator")
+st.markdown("### Transform Your Ideas into Engaging LinkedIn Content")
 
-# Input section
-st.markdown("### Enter Your Topic")
-user_prompt = st.text_area("What would you like to create a post about?", height=100)
+# Input section with columns
+col1, col2 = st.columns([2, 1])
 
-# Tone selection
-tone = st.selectbox("Select Tone:", 
-    ["professional", "conversational", "technical", "inspirational", "analytical"])
+with col1:
+    st.markdown("### Enter Your Topic")
+    user_prompt = st.text_area(
+        "What would you like to create a post about?",
+        height=150,
+        placeholder="Enter your topic, idea, or key points here..."
+    )
 
-if st.button("Generate Post", type="primary"):
+with col2:
+    st.markdown("### Customize Your Post")
+    tone = st.selectbox(
+        "Select Tone:",
+        ["Professional", "Conversational", "Technical", "Inspirational", "Analytical"],
+        index=0
+    )
+
+# Generate button
+if st.button("Generate Post ✨", use_container_width=True):
     if user_prompt:
-        with st.spinner("✍️ Generating your LinkedIn post..."):
-            post_content = generate_linkedin_post(user_prompt, tone)
-            st.markdown("### 📝 Generated LinkedIn Post")
-            st.markdown(post_content) 
+        with st.spinner("✍️ Crafting your LinkedIn post..."):
+            post_content = generate_linkedin_post(user_prompt, tone.lower())
+            st.markdown("### 📝 Your Generated LinkedIn Post")
+            st.markdown(post_content)
+            
+            # Copy button
+            st.markdown("---")
+            st.markdown("Copy your post and share it on LinkedIn!")
+    else:
+        st.warning("Please enter a topic for your LinkedIn post.") 
