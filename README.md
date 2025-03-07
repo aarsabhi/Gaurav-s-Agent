@@ -15,7 +15,7 @@ An AI-powered LinkedIn post generator that creates engaging content from topics 
 
 1. Clone the repository:
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/aarsabhi/linkedin-post-generator.git
 cd linkedin-post-generator
 ```
 
@@ -52,7 +52,7 @@ streamlit run app.py
 
 ## Deployment
 
-The app is deployed on Streamlit Cloud. Visit [app-url] to use it.
+The app is deployed on Streamlit Cloud. Visit [https://linkedin-post-generator.streamlit.app](https://linkedin-post-generator.streamlit.app) to use it.
 
 ## Contributing
 
