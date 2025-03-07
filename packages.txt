@@ -1,7 +1,2 @@
 python3-dev
-build-essential
-ffmpeg
-python-dev
-libpython3-dev
-libssl-dev
-git 
+build-essential 
