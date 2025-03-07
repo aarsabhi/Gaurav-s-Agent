@@ -5,7 +5,7 @@ import emoji
 import os
 from dotenv import load_dotenv
 import json
-from tavily.client import Client as TavilyClient
+from tavily import TavilyClient
 import validators
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
@@ -14,7 +14,7 @@ import re
 load_dotenv()
 
 # Initialize Tavily client
-tavily = TavilyClient(api_key="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")
+tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY", "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"))
 
 # Page configuration
 st.set_page_config(
