@@ -23,7 +23,7 @@ tavily = TavilyClient(api_key=TAVILY_API_KEY)
 openai.api_type = "azure"
 openai.api_key = AZURE_API_KEY
 openai.api_base = AZURE_ENDPOINT
-openai.api_version = "2023-07-01-preview"
+openai.api_version = "2023-05-15"  # Azure OpenAI version
 
 # Page configuration
 st.set_page_config(
@@ -69,7 +69,10 @@ def get_url_content(url):
     """Get content from URL using Tavily API"""
     try:
         search_result = tavily.search(query=f"summarize the content from {url}")
-        return search_result['results'][0]['content'] if search_result['results'] else None
+        if search_result and 'results' in search_result and len(search_result['results']) > 0:
+            return search_result['results'][0]['content']
+        st.error("No content found from the URL")
+        return None
     except Exception as e:
         st.error(f"Error getting URL content: {str(e)}")
         return None
@@ -83,22 +86,21 @@ def generate_linkedin_post(content, tone="professional", content_type="topic"):
         elif content_type == "youtube":
             context = f"\n\nBased on the following video transcript:\n{content}"
 
-        messages = [
-            {"role": "system", "content": f"""You are a professional LinkedIn content creator. 
-            Create an engaging post with the following tone: {tone}
-            Include:
-            - 3-4 concise paragraphs
-            - Engaging opening hook
-            - Professional insights
-            - Call to action
-            - 3-5 relevant hashtags
-            Make it engaging while maintaining professionalism."""},
-            {"role": "user", "content": f"Create a LinkedIn post about: {content}{context}"}
-        ]
+        system_prompt = f"""You are a professional LinkedIn content creator. 
+        Create an engaging post with the following tone: {tone}
+        Include:
+        - 3-4 concise paragraphs
+        - Engaging opening hook
+        - Professional insights
+        - Call to action
+        - 3-5 relevant hashtags
+        Make it engaging while maintaining professionalism."""
 
-        response = openai.ChatCompletion.create(
+        prompt = f"System: {system_prompt}\n\nUser: Create a LinkedIn post about: {content}{context}"
+
+        response = openai.Completion.create(
             engine="gpt-4",
-            messages=messages,
+            prompt=prompt,
             temperature=0.7,
             max_tokens=800,
             top_p=1,
@@ -106,7 +108,7 @@ def generate_linkedin_post(content, tone="professional", content_type="topic"):
             presence_penalty=0
         )
         
-        return response.choices[0].message.content.strip()
+        return response.choices[0].text.strip()
     except Exception as e:
         st.error(f"Error generating post: {str(e)}")
         return None
@@ -158,12 +160,14 @@ if st.button("Generate Post ✨", use_container_width=True):
                         video_id = extract_youtube_id(user_input)
                         if video_id:
                             content = get_youtube_transcript(video_id)
-                            content_type = "youtube"
+                            if content:
+                                content_type = "youtube"
                         else:
                             st.error("Invalid YouTube URL")
                     else:
                         content = get_url_content(user_input)
-                        content_type = "url"
+                        if content:
+                            content_type = "url"
 
             if content:
                 post_content = generate_linkedin_post(content, tone.lower(), content_type)
@@ -179,12 +183,13 @@ if st.button("Generate Post ✨", use_container_width=True):
                         ["Make it shorter", "Make it longer", "Add more hashtags", "Make it more professional", "Add statistics"]
                     )
                     
-                    if refinement and st.button("Refine Post", use_container_width=True):
-                        with st.spinner("🔄 Refining your post..."):
-                            refinement_prompt = f"Please refine this LinkedIn post with these adjustments: {', '.join(refinement)}\n\nOriginal post:\n{post_content}"
-                            refined_content = generate_linkedin_post(refinement_prompt, tone.lower(), "topic")
-                            if refined_content:
-                                st.markdown("### 📝 Your Refined LinkedIn Post")
-                                st.markdown(refined_content)
+                    if refinement:
+                        if st.button("Refine Post ✨", key="refine_button", use_container_width=True):
+                            with st.spinner("🔄 Refining your post..."):
+                                refinement_prompt = f"Please refine this LinkedIn post with these adjustments: {', '.join(refinement)}\n\nOriginal post:\n{post_content}"
+                                refined_content = generate_linkedin_post(refinement_prompt, tone.lower(), "topic")
+                                if refined_content:
+                                    st.markdown("### 📝 Your Refined LinkedIn Post")
+                                    st.markdown(refined_content)
     else:
         st.warning(f"Please enter a {'topic' if input_type == 'Topic' else 'URL'}.") 
