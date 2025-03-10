@@ -9,9 +9,16 @@ from tavily import TavilyClient
 import validators
 from youtube_transcript_api import YouTubeTranscriptApi
 import re
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import html
 
 # Load environment variables
 load_dotenv()
+
+# Initialize YouTube API client
+YOUTUBE_API_KEY = "AIzaSyBtgp091vOqZumrKYXoD1Rl1-vqF4lKgGs"  # Replace with your API key
+youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
 # Initialize Tavily client
 tavily = TavilyClient(api_key="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")
@@ -130,49 +137,100 @@ def extract_youtube_id(url):
     match = re.search(youtube_regex, url)
     return match.group(1) if match else None
 
-def get_youtube_transcript(url):
-    """Get transcript from YouTube video"""
+def get_video_details(video_id):
+    """Get video details from YouTube API"""
+    try:
+        # Get video details
+        video_response = youtube.videos().list(
+            part='snippet,statistics',
+            id=video_id
+        ).execute()
+
+        if not video_response['items']:
+            return None
+
+        video_data = video_response['items'][0]
+        snippet = video_data['snippet']
+        statistics = video_data['statistics']
+
+        # Get video comments
+        comments = []
+        try:
+            comments_response = youtube.commentThreads().list(
+                part='snippet',
+                videoId=video_id,
+                maxResults=10,
+                order='relevance'
+            ).execute()
+
+            for item in comments_response['items']:
+                comment = item['snippet']['topLevelComment']['snippet']
+                comments.append(comment['textDisplay'])
+        except:
+            # Comments might be disabled
+            pass
+
+        return {
+            'title': snippet['title'],
+            'description': snippet['description'],
+            'channel': snippet['channelTitle'],
+            'published_at': snippet['publishedAt'],
+            'view_count': statistics.get('viewCount', '0'),
+            'like_count': statistics.get('likeCount', '0'),
+            'comment_count': statistics.get('commentCount', '0'),
+            'comments': comments
+        }
+    except HttpError as e:
+        st.error(f"Error fetching video details: {str(e)}")
+        return None
+
+def get_youtube_content(url):
+    """Get content from YouTube video using multiple methods"""
     try:
         video_id = extract_youtube_id(url)
         if not video_id:
             st.error("Could not extract YouTube video ID. Please check the URL.")
             return None
 
-        try:
-            # First try with default language
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        except Exception as e:
-            try:
-                # If default fails, try to get all transcripts and use the first available one
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                transcript = transcript_list.find_transcript(['en'])  # Try English first
-                if not transcript:
-                    # If no English, get the first available transcript
-                    transcript = next(iter(transcript_list))
-                transcript_list = transcript.fetch()
-            except Exception as inner_e:
-                st.error(f"Could not fetch transcript. Error: {str(inner_e)}")
-                return None
-        
-        # Combine transcript text with timestamps
-        full_transcript = []
-        for entry in transcript_list:
-            text = entry.get('text', '').strip()
-            if text:
-                full_transcript.append(text)
-        
-        # Join all text parts
-        combined_transcript = ' '.join(full_transcript)
-        
-        if not combined_transcript:
-            st.warning("Transcript is empty. The video might not have captions.")
+        # First, try to get video details from YouTube API
+        video_details = get_video_details(video_id)
+        if not video_details:
+            st.error("Could not fetch video details from YouTube.")
             return None
-            
+
+        # Try to get transcript if available
+        transcript_text = ""
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            transcript_text = ' '.join([entry['text'] for entry in transcript_list])
+        except:
+            # If transcript fails, we'll work with video details only
+            pass
+
+        # Combine all available content
+        content = f"""Video Title: {video_details['title']}
+Channel: {video_details['channel']}
+Views: {video_details['view_count']}
+Likes: {video_details['like_count']}
+
+Description:
+{video_details['description']}
+
+{"Transcript:" if transcript_text else ""}
+{transcript_text if transcript_text else ""}
+
+{"Top Comments:" if video_details['comments'] else ""}
+{chr(10).join(f"- {html.unescape(comment)}" for comment in video_details['comments'][:5]) if video_details['comments'] else ""}
+"""
+
         return {
-            'title': 'YouTube Video Transcript',
-            'content': combined_transcript,
+            'title': video_details['title'],
+            'content': content,
             'video_id': video_id,
-            'url': url
+            'url': url,
+            'channel': video_details['channel'],
+            'views': video_details['view_count'],
+            'likes': video_details['like_count']
         }
     except Exception as e:
         st.error(f"Error processing YouTube video: {str(e)}")
@@ -396,17 +454,17 @@ def extract_url_content(url):
         
         # Check if it's a YouTube URL
         if is_youtube_url(url):
-            with st.spinner("📺 Fetching YouTube video transcript..."):
-                transcript_data = get_youtube_transcript(url)
-                if transcript_data:
-                    # Use Azure OpenAI to analyze the transcript
+            with st.spinner("📺 Analyzing YouTube video..."):
+                video_content = get_youtube_content(url)
+                if video_content:
+                    # Use Azure OpenAI to analyze the content
                     client = openai.AzureOpenAI(
                         api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
                         api_version="2023-05-15",
                         azure_endpoint="https://idpoai.openai.azure.com"
                     )
                     
-                    system_prompt = """You are an expert content analyzer. Analyze this YouTube video transcript and provide:
+                    system_prompt = """You are an expert content analyzer. Analyze this YouTube video content and provide:
                     [TITLE]
                     A clear title describing the main topic
                     [CONTENT]
@@ -422,7 +480,7 @@ def extract_url_content(url):
                         model="gpt-4",
                         messages=[
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Analyze this video transcript: {transcript_data['content']}"}
+                            {"role": "user", "content": f"Analyze this video content:\n\n{video_content['content']}"}
                         ],
                         temperature=0.7,
                         max_tokens=1500
@@ -432,12 +490,15 @@ def extract_url_content(url):
                     sections = content.split("[")
                     
                     return {
-                        'title': sections[1].split("]")[1].strip() if len(sections) > 1 else "Video Analysis",
+                        'title': sections[1].split("]")[1].strip() if len(sections) > 1 else video_content['title'],
                         'content': sections[2].split("]")[1].strip() if len(sections) > 2 else "",
                         'key_points': [p.strip() for p in sections[3].split("]")[1].strip().split("\n") if p.strip()] if len(sections) > 3 else [],
                         'url': url,
                         'is_video': True,
-                        'video_id': transcript_data['video_id']
+                        'video_id': video_content['video_id'],
+                        'channel': video_content['channel'],
+                        'views': video_content['views'],
+                        'likes': video_content['likes']
                     }
                 return None
         
