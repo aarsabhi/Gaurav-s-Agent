@@ -135,21 +135,47 @@ def get_youtube_transcript(url):
     try:
         video_id = extract_youtube_id(url)
         if not video_id:
+            st.error("Could not extract YouTube video ID. Please check the URL.")
+            return None
+
+        try:
+            # First try with default language
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        except Exception as e:
+            try:
+                # If default fails, try to get all transcripts and use the first available one
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                transcript = transcript_list.find_transcript(['en'])  # Try English first
+                if not transcript:
+                    # If no English, get the first available transcript
+                    transcript = next(iter(transcript_list))
+                transcript_list = transcript.fetch()
+            except Exception as inner_e:
+                st.error(f"Could not fetch transcript. Error: {str(inner_e)}")
+                return None
+        
+        # Combine transcript text with timestamps
+        full_transcript = []
+        for entry in transcript_list:
+            text = entry.get('text', '').strip()
+            if text:
+                full_transcript.append(text)
+        
+        # Join all text parts
+        combined_transcript = ' '.join(full_transcript)
+        
+        if not combined_transcript:
+            st.warning("Transcript is empty. The video might not have captions.")
             return None
             
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        
-        # Combine transcript text
-        full_transcript = ' '.join([entry['text'] for entry in transcript_list])
-        
         return {
             'title': 'YouTube Video Transcript',
-            'content': full_transcript,
+            'content': combined_transcript,
             'video_id': video_id,
             'url': url
         }
     except Exception as e:
-        st.warning(f"Could not fetch YouTube transcript: {str(e)}")
+        st.error(f"Error processing YouTube video: {str(e)}")
         return None
 
 def is_youtube_url(url):
@@ -370,49 +396,50 @@ def extract_url_content(url):
         
         # Check if it's a YouTube URL
         if is_youtube_url(url):
-            transcript_data = get_youtube_transcript(url)
-            if transcript_data:
-                # Use Azure OpenAI to analyze the transcript
-                client = openai.AzureOpenAI(
-                    api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
-                    api_version="2023-05-15",
-                    azure_endpoint="https://idpoai.openai.azure.com"
-                )
-                
-                system_prompt = """You are an expert content analyzer. Analyze this YouTube video transcript and provide:
-                [TITLE]
-                A clear title describing the main topic
-                [CONTENT]
-                A well-structured summary of the key points (400-500 words)
-                [KEY_POINTS]
-                - Key point 1
-                - Key point 2
-                - Key point 3
-                - Key point 4
-                - Key point 5"""
+            with st.spinner("📺 Fetching YouTube video transcript..."):
+                transcript_data = get_youtube_transcript(url)
+                if transcript_data:
+                    # Use Azure OpenAI to analyze the transcript
+                    client = openai.AzureOpenAI(
+                        api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
+                        api_version="2023-05-15",
+                        azure_endpoint="https://idpoai.openai.azure.com"
+                    )
+                    
+                    system_prompt = """You are an expert content analyzer. Analyze this YouTube video transcript and provide:
+                    [TITLE]
+                    A clear title describing the main topic
+                    [CONTENT]
+                    A well-structured summary of the main points and key insights (400-500 words)
+                    [KEY_POINTS]
+                    - Key point 1 (main insight or finding)
+                    - Key point 2 (important detail or example)
+                    - Key point 3 (significant statistic or fact)
+                    - Key point 4 (future implication or prediction)
+                    - Key point 5 (actionable takeaway)"""
 
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Analyze this video transcript: {transcript_data['content']}"}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1500
-                )
-                
-                content = response.choices[0].message.content
-                sections = content.split("[")
-                
-                return {
-                    'title': sections[1].split("]")[1].strip() if len(sections) > 1 else "Video Analysis",
-                    'content': sections[2].split("]")[1].strip() if len(sections) > 2 else "",
-                    'key_points': [p.strip() for p in sections[3].split("]")[1].strip().split("\n") if p.strip()] if len(sections) > 3 else [],
-                    'url': url,
-                    'is_video': True,
-                    'video_id': transcript_data['video_id']
-                }
-            return None
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Analyze this video transcript: {transcript_data['content']}"}
+                        ],
+                        temperature=0.7,
+                        max_tokens=1500
+                    )
+                    
+                    content = response.choices[0].message.content
+                    sections = content.split("[")
+                    
+                    return {
+                        'title': sections[1].split("]")[1].strip() if len(sections) > 1 else "Video Analysis",
+                        'content': sections[2].split("]")[1].strip() if len(sections) > 2 else "",
+                        'key_points': [p.strip() for p in sections[3].split("]")[1].strip().split("\n") if p.strip()] if len(sections) > 3 else [],
+                        'url': url,
+                        'is_video': True,
+                        'video_id': transcript_data['video_id']
+                    }
+                return None
         
         # For non-YouTube URLs, use the existing method
         client = openai.AzureOpenAI(
