@@ -9,6 +9,8 @@ from tavily import TavilyClient
 import validators
 import time
 from datetime import datetime
+import random
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
@@ -29,6 +31,12 @@ openai.api_version = "2023-07-01-preview"
 
 # Azure OpenAI Deployment Name
 AZURE_DEPLOYMENT_NAME = "gpt-4o"
+
+# Free proxy list for YouTube requests
+PROXY_LIST = [
+    "https://api.allorigins.win/raw?url=",
+    "https://api.codetabs.com/v1/proxy?quest="
+]
 
 # Page configuration
 st.set_page_config(
@@ -94,36 +102,79 @@ def summarize_content(text, title=""):
         st.error(f"Error summarizing content: {str(e)}")
         return None
 
-def get_web_search_results(topic):
-    """Get web search results using Tavily API"""
+def extract_statistics_and_quotes(text):
+    """Extract statistics and quotes from text using Azure OpenAI"""
     try:
-        search_result = tavily.search(
+        messages = [
+            {"role": "system", "content": "You are a data analyst. Extract key statistics, numbers, and notable quotes from the given text. Format them as bullet points."},
+            {"role": "user", "content": f"Extract statistics and quotes from:\n{text}"}
+        ]
+
+        response = openai.ChatCompletion.create(
+            engine=AZURE_DEPLOYMENT_NAME,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=500
+        )
+        
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return ""
+
+def get_web_search_results(topic):
+    """Get web search results using Tavily API with enhanced processing"""
+    try:
+        # First search for statistics and data
+        stats_search = tavily.search(
+            query=f"statistics data numbers facts about {topic}",
+            search_depth="advanced",
+            include_domains=["linkedin.com", "medium.com", "forbes.com", "entrepreneur.com", "inc.com", "statista.com", "bloomberg.com"],
+            max_results=3
+        )
+        
+        # Then search for general content
+        general_search = tavily.search(
             query=topic,
             search_depth="advanced",
             include_domains=["linkedin.com", "medium.com", "forbes.com", "entrepreneur.com", "inc.com"],
             include_answer=True,
-            max_results=5
+            max_results=3
         )
         
-        if search_result and 'results' in search_result:
+        if stats_search and general_search:
             sources = []
             content = []
+            stats = []
             
-            # Extract answer if available
-            if 'answer' in search_result and search_result['answer']:
-                content.append(search_result['answer'])
-            
-            # Process each result
-            for result in search_result['results']:
+            # Process statistics search
+            for result in stats_search.get('results', []):
+                stats.append(result.get('content', ''))
                 sources.append({
                     'title': result.get('title', 'Untitled'),
                     'url': result.get('url', ''),
-                    'published_date': result.get('published_date', '')
+                    'published_date': result.get('published_date', ''),
+                    'type': 'Statistics Source'
                 })
+
+            # Process general search
+            if 'answer' in general_search and general_search['answer']:
+                content.append(general_search['answer'])
+            
+            for result in general_search.get('results', []):
                 content.append(result.get('content', ''))
+                sources.append({
+                    'title': result.get('title', 'Untitled'),
+                    'url': result.get('url', ''),
+                    'published_date': result.get('published_date', ''),
+                    'type': 'General Source'
+                })
+            
+            # Extract statistics and quotes
+            stats_and_quotes = extract_statistics_and_quotes("\n".join(stats))
             
             return {
                 'content': "\n\n".join(content),
+                'statistics': stats_and_quotes,
                 'sources': sources
             }
         return None
@@ -162,42 +213,28 @@ def get_youtube_video_info(video_id):
         pass
     return None
 
-def get_youtube_transcript(video_id):
-    """Get YouTube video transcript with retry mechanism"""
-    max_retries = 3
-    retry_delay = 2
+def get_youtube_transcript_with_proxy(video_id):
+    """Get YouTube transcript using proxy servers"""
+    errors = []
     
-    for attempt in range(max_retries):
+    # Try direct access first
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join([item['text'] for item in transcript_list])
+    except Exception as e:
+        errors.append(str(e))
+
+    # Try with each proxy
+    for proxy in PROXY_LIST:
         try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            transcript_text = " ".join([item['text'] for item in transcript_list])
-            
-            # Get video information
-            video_info = get_youtube_video_info(video_id)
-            if video_info:
-                return {
-                    'text': transcript_text,
-                    'title': video_info['title'],
-                    'channel': video_info['channel'],
-                    'published_date': video_info['published_date']
-                }
-            return {'text': transcript_text}
-            
+            time.sleep(2)  # Respect rate limits
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies={'http': proxy, 'https': proxy})
+            return " ".join([item['text'] for item in transcript_list])
         except Exception as e:
-            if "Too Many Requests" in str(e) and attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                retry_delay *= 2
-                continue
-            
-            if "TranscriptsDisabled" in str(e):
-                st.error("This video does not have closed captions or transcripts enabled.")
-            elif "VideoUnavailable" in str(e):
-                st.error("This video is unavailable or private.")
-            else:
-                st.error(f"Could not get transcript: {str(e)}")
-            return None
-    
-    st.error("Failed to get transcript after multiple attempts. Please try again later.")
+            errors.append(str(e))
+            continue
+
+    st.error(f"Could not get transcript. Errors: {'; '.join(errors)}")
     return None
 
 def get_url_content(url):
@@ -237,12 +274,15 @@ def display_sources(sources, title="Sources Used"):
         """, unsafe_allow_html=True)
 
 def generate_linkedin_post(content, tone="professional", content_type="topic", source_info=None):
-    """Generate LinkedIn post using Azure OpenAI"""
+    """Generate LinkedIn post using Azure OpenAI with enhanced prompting"""
     try:
         context = ""
+        stats = ""
+        
         if isinstance(content, dict):
             if 'sources' in content:  # Web search results
-                context = f"\n\nBased on the following research:\n{content['content']}"
+                stats = f"\n\nKey Statistics and Quotes:\n{content.get('statistics', '')}"
+                context = f"\n\nBased on the following research:\n{content['content']}{stats}"
             elif 'content' in content:  # URL content
                 context = f"\n\nBased on the article: '{content['title']}'\n{content['content']}"
             elif 'text' in content:  # YouTube content
@@ -252,15 +292,18 @@ def generate_linkedin_post(content, tone="professional", content_type="topic", s
             context = content
 
         messages = [
-            {"role": "system", "content": f"""You are a professional LinkedIn content creator. 
-            Create an engaging post with the following tone: {tone}
-            Include:
-            - 3-4 concise paragraphs
-            - Engaging opening hook
-            - Professional insights
-            - Call to action
-            - 3-5 relevant hashtags
-            Make it engaging while maintaining professionalism."""},
+            {"role": "system", "content": f"""You are an expert LinkedIn content creator specializing in data-driven, engaging posts.
+            Create a compelling post with the following tone: {tone}
+            
+            Required elements:
+            1. Start with an attention-grabbing statistic or surprising fact
+            2. Include 2-3 concise, value-packed paragraphs
+            3. Incorporate relevant statistics and data points
+            4. Add a thought-provoking quote if available
+            5. End with a clear call-to-action
+            6. Include 3-5 relevant, trending hashtags
+            
+            Make it professional, insightful, and backed by data. Focus on providing actionable value to readers."""},
             {"role": "user", "content": f"Create a LinkedIn post about: {context}"}
         ]
 
@@ -334,19 +377,19 @@ if st.button("Generate Post ✨", use_container_width=True):
                 else:
                     video_id = extract_youtube_id(user_input)
                     if video_id:
-                        content = get_youtube_transcript(video_id)
+                        content = get_youtube_transcript_with_proxy(video_id)
                         if content:
                             # Summarize transcript
-                            summary = summarize_content(content['text'], content.get('title', ''))
+                            summary = summarize_content(content, '')
                             if summary:
-                                content['text'] = summary
+                                content = summary
                                 content_type = "youtube"
                                 source_info = {
                                     'type': 'youtube',
                                     'url': user_input,
-                                    'title': content.get('title', 'YouTube Video'),
-                                    'channel': content.get('channel', 'Unknown Channel'),
-                                    'published_date': content.get('published_date', '')
+                                    'title': content.split('\n')[0],
+                                    'channel': content.split('\n')[1],
+                                    'published_date': content.split('\n')[2]
                                 }
                     else:
                         st.error("Invalid YouTube URL")
@@ -408,15 +451,47 @@ if st.button("Generate Post ✨", use_container_width=True):
                     st.markdown("---")
                     st.markdown("### ✨ Refine Your Post")
                     
-                    refinement = st.multiselect(
-                        "Select refinement options:",
-                        ["Make it shorter", "Make it longer", "Add more hashtags", "Make it more professional", "Add statistics"]
-                    )
+                    # Show original post in a box
+                    st.markdown("#### Current Version")
+                    st.markdown('<div class="content-box">', unsafe_allow_html=True)
+                    st.markdown(post_content)
+                    st.markdown('</div>', unsafe_allow_html=True)
                     
-                    if refinement:
+                    # Refinement options
+                    col1, col2 = st.columns([1, 1])
+                    
+                    with col1:
+                        refinement = st.multiselect(
+                            "Quick Refinement Options:",
+                            ["Make it shorter", "Make it longer", "Add more hashtags", 
+                             "Make it more professional", "Add statistics", 
+                             "Add more data points", "Include market trends",
+                             "Add industry insights"]
+                        )
+                    
+                    with col2:
+                        custom_instructions = st.text_area(
+                            "Custom Refinement Instructions:",
+                            placeholder="Enter specific instructions for how you'd like to improve the post..."
+                        )
+                    
+                    if refinement or custom_instructions:
                         if st.button("Refine Post ✨", key="refine_button", use_container_width=True):
                             with st.spinner("🔄 Refining your post..."):
-                                refinement_prompt = f"Please refine this LinkedIn post with these adjustments: {', '.join(refinement)}\n\nOriginal post:\n{post_content}"
+                                instructions = []
+                                if refinement:
+                                    instructions.append(f"Apply these refinements: {', '.join(refinement)}")
+                                if custom_instructions:
+                                    instructions.append(f"Additional instructions: {custom_instructions}")
+                                
+                                refinement_prompt = f"""Please improve this LinkedIn post with the following changes:
+                                {' '.join(instructions)}
+                                
+                                Original post:
+                                {post_content}
+                                
+                                Create a new version that maintains the core message but incorporates the requested improvements."""
+                                
                                 refined_content = generate_linkedin_post(refinement_prompt, tone.lower(), "topic")
                                 if refined_content:
                                     st.markdown("### 📝 Post Comparison")
@@ -427,19 +502,28 @@ if st.button("Generate Post ✨", use_container_width=True):
                                         st.markdown('<div class="content-box">', unsafe_allow_html=True)
                                         st.markdown(post_content)
                                         st.markdown('</div>', unsafe_allow_html=True)
+                                        if source_info:
+                                            st.markdown("**Sources Used:**")
+                                            display_sources([source_info] if not isinstance(source_info.get('sources', []), list) else source_info['sources'])
                                     
                                     with col2:
                                         st.markdown("#### Refined Post")
                                         st.markdown('<div class="content-box">', unsafe_allow_html=True)
                                         st.markdown(refined_content)
                                         st.markdown('</div>', unsafe_allow_html=True)
+                                        st.markdown("**Improvements Made:**")
+                                        if refinement:
+                                            st.markdown("- " + "\n- ".join(refinement))
+                                        if custom_instructions:
+                                            st.markdown(f"- Custom improvements: {custom_instructions}")
                                         
                                     # Store refined version
                                     st.session_state.posts.append({
                                         'content': refined_content,
                                         'source_info': source_info,
                                         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        'refinement_options': refinement
+                                        'refinement_options': refinement,
+                                        'custom_instructions': custom_instructions
                                     })
     else:
         st.warning(f"Please enter a {'topic' if input_type == 'Topic (Web Research)' else 'URL'}.") 
