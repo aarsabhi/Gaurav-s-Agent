@@ -1,54 +1,38 @@
 import streamlit as st
 import openai
+from datetime import datetime, timedelta
+import emoji
 import os
 from dotenv import load_dotenv
-import requests
-from youtube_transcript_api import YouTubeTranscriptApi
-import re
+import json
 from tavily import TavilyClient
 import validators
-import time
-from datetime import datetime
-import random
-from urllib.parse import urlparse
+from youtube_transcript_api import YouTubeTranscriptApi
+import re
 
 # Load environment variables
 load_dotenv()
 
-# Initialize API keys
-AZURE_API_KEY = os.getenv("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d")
-AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT", "https://idpoai.openai.azure.com")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
-
 # Initialize Tavily client
-tavily = TavilyClient(api_key=TAVILY_API_KEY)
-
-# Configure OpenAI
-openai.api_type = "azure"
-openai.api_key = AZURE_API_KEY
-openai.api_base = AZURE_ENDPOINT
-openai.api_version = "2023-07-01-preview"
-
-# Azure OpenAI Deployment Name
-AZURE_DEPLOYMENT_NAME = "gpt-4o"
-
-# Free proxy list for YouTube requests
-PROXY_LIST = [
-    "https://api.allorigins.win/raw?url=",
-    "https://api.codetabs.com/v1/proxy?quest="
-]
+tavily = TavilyClient(api_key="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")
 
 # Page configuration
 st.set_page_config(
     page_title="LinkedIn Post Generator",
     page_icon="📝",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS with added comparison styles
 st.markdown("""
     <style>
-    .main { padding: 2rem; }
+    .main {
+        padding: 2rem;
+    }
+    .stTextInput > div > div > input, .stTextArea > div > div > textarea {
+        background-color: #f3f2ef;
+    }
     .stButton>button {
         background-color: #0a66c2;
         color: white;
@@ -57,473 +41,623 @@ st.markdown("""
         font-weight: 600;
         width: 100%;
     }
-    .stTextArea>div>div>textarea {
-        background-color: #f3f6f9;
+    .stButton>button:hover {
+        background-color: #004182;
     }
-    .source-info {
-        padding: 15px;
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        margin: 15px 0;
-        border-left: 4px solid #0a66c2;
-    }
-    .content-box {
+    .output-box {
+        background-color: #ffffff;
         padding: 20px;
-        background-color: white;
         border-radius: 8px;
-        border: 1px solid #e1e4e8;
+        border: 1px solid #e0e0e0;
         margin: 10px 0;
     }
-    .content-comparison {
+    .refinement-box {
+        background-color: #f3f2ef;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .source-box {
+        background-color: #e8f4f9;
+        padding: 10px;
+        border-radius: 4px;
+        margin: 5px 0;
+        font-size: 0.9em;
+    }
+    .css-1v0mbdj.etr89bj1 {
+        margin-top: 20px;
+    }
+    h1 {
+        color: #0a66c2;
+    }
+    .linkedin-tips {
+        background-color: #f3f2ef;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    .comparison-container {
         display: flex;
         gap: 20px;
         margin: 20px 0;
     }
+    .original-post, .refined-post {
+        flex: 1;
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+    }
+    .original-post {
+        border-left: 4px solid #0a66c2;
+    }
+    .refined-post {
+        border-left: 4px solid #057642;
+    }
+    .changes-list {
+        background-color: #f0f7ff;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .web-search-result {
+        background-color: #f5f5f5;
+        padding: 12px;
+        border-radius: 6px;
+        margin: 8px 0;
+        border-left: 3px solid #0a66c2;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-def summarize_content(text, title=""):
-    """Summarize content using Azure OpenAI"""
-    try:
-        messages = [
-            {"role": "system", "content": "You are a professional content summarizer. Create a concise summary that captures the main points and key insights."},
-            {"role": "user", "content": f"Title: {title}\n\nContent to summarize:\n{text}"}
-        ]
-
-        response = openai.ChatCompletion.create(
-            engine=AZURE_DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=500
-        )
-        
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        st.error(f"Error summarizing content: {str(e)}")
-        return None
-
-def extract_statistics_and_quotes(text):
-    """Extract statistics and quotes from text using Azure OpenAI"""
-    try:
-        messages = [
-            {"role": "system", "content": "You are a data analyst. Extract key statistics, numbers, and notable quotes from the given text. Format them as bullet points."},
-            {"role": "user", "content": f"Extract statistics and quotes from:\n{text}"}
-        ]
-
-        response = openai.ChatCompletion.create(
-            engine=AZURE_DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=500
-        )
-        
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return ""
-
-def get_web_search_results(topic):
-    """Get web search results using Tavily API with enhanced processing"""
-    try:
-        # First search for statistics and data
-        stats_search = tavily.search(
-            query=f"statistics data numbers facts about {topic}",
-            search_depth="advanced",
-            include_domains=["linkedin.com", "medium.com", "forbes.com", "entrepreneur.com", "inc.com", "statista.com", "bloomberg.com"],
-            max_results=3
-        )
-        
-        # Then search for general content
-        general_search = tavily.search(
-            query=topic,
-            search_depth="advanced",
-            include_domains=["linkedin.com", "medium.com", "forbes.com", "entrepreneur.com", "inc.com"],
-            include_answer=True,
-            max_results=3
-        )
-        
-        if stats_search and general_search:
-            sources = []
-            content = []
-            stats = []
-            
-            # Process statistics search
-            for result in stats_search.get('results', []):
-                stats.append(result.get('content', ''))
-                sources.append({
-                    'title': result.get('title', 'Untitled'),
-                    'url': result.get('url', ''),
-                    'published_date': result.get('published_date', ''),
-                    'type': 'Statistics Source'
-                })
-
-            # Process general search
-            if 'answer' in general_search and general_search['answer']:
-                content.append(general_search['answer'])
-            
-            for result in general_search.get('results', []):
-                content.append(result.get('content', ''))
-                sources.append({
-                    'title': result.get('title', 'Untitled'),
-                    'url': result.get('url', ''),
-                    'published_date': result.get('published_date', ''),
-                    'type': 'General Source'
-                })
-            
-            # Extract statistics and quotes
-            stats_and_quotes = extract_statistics_and_quotes("\n".join(stats))
-            
-            return {
-                'content': "\n\n".join(content),
-                'statistics': stats_and_quotes,
-                'sources': sources
-            }
-        return None
-    except Exception as e:
-        st.error(f"Error in web search: {str(e)}")
-        return None
+# Initialize session states
+if 'post_history' not in st.session_state:
+    st.session_state.post_history = []
+if 'current_post' not in st.session_state:
+    st.session_state.current_post = None
+if 'current_sources' not in st.session_state:
+    st.session_state.current_sources = []
+if 'current_trends' not in st.session_state:
+    st.session_state.current_trends = []
+if 'original_post' not in st.session_state:
+    st.session_state.original_post = None
+if 'url_content' not in st.session_state:
+    st.session_state.url_content = None
 
 def extract_youtube_id(url):
     """Extract YouTube video ID from URL"""
-    patterns = [
-        r'(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
-        r'(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+    youtube_regex = r'(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
+    match = re.search(youtube_regex, url)
+    return match.group(1) if match else None
 
-def get_youtube_video_info(video_id):
-    """Get YouTube video title and channel name"""
+def get_youtube_transcript(url):
+    """Get transcript from YouTube video"""
     try:
-        api_url = f"https://www.googleapis.com/youtube/v3/videos?id={video_id}&key=AIzaSyDz8YY8oFe9YGEYe3_0IzOZrYWnm6wKCyM&part=snippet"
-        response = requests.get(api_url)
-        data = response.json()
-        
-        if 'items' in data and len(data['items']) > 0:
-            snippet = data['items'][0]['snippet']
-            return {
-                'title': snippet['title'],
-                'channel': snippet['channelTitle'],
-                'published_date': snippet['publishedAt'][:10]
-            }
-    except Exception:
-        pass
-    return None
-
-def get_youtube_transcript_with_proxy(video_id):
-    """Get YouTube transcript using proxy servers"""
-    errors = []
-    
-    # Try direct access first
-    try:
+        video_id = extract_youtube_id(url)
+        if not video_id:
+            return None
+            
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        return " ".join([item['text'] for item in transcript_list])
+        
+        # Combine transcript text
+        full_transcript = ' '.join([entry['text'] for entry in transcript_list])
+        
+        return {
+            'title': 'YouTube Video Transcript',
+            'content': full_transcript,
+            'video_id': video_id,
+            'url': url
+        }
     except Exception as e:
-        errors.append(str(e))
-
-    # Try with each proxy
-    for proxy in PROXY_LIST:
-        try:
-            time.sleep(2)  # Respect rate limits
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, proxies={'http': proxy, 'https': proxy})
-            return " ".join([item['text'] for item in transcript_list])
-        except Exception as e:
-            errors.append(str(e))
-            continue
-
-    st.error(f"Could not get transcript. Errors: {'; '.join(errors)}")
-    return None
-
-def get_url_content(url):
-    """Get content from URL using requests"""
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            # Use Tavily to extract main content
-            search_result = tavily.search(query=f"summarize the content from {url}")
-            if search_result and 'results' in search_result and len(search_result['results']) > 0:
-                result = search_result['results'][0]
-                return {
-                    'content': result['content'],
-                    'title': result.get('title', 'Article'),
-                    'url': url,
-                    'published_date': result.get('published_date', '')
-                }
-        st.error("Could not extract content from the URL")
-        return None
-    except Exception as e:
-        st.error(f"Error getting URL content: {str(e)}")
+        st.warning(f"Could not fetch YouTube transcript: {str(e)}")
         return None
 
-def display_sources(sources, title="Sources Used"):
-    """Display sources in a formatted way"""
-    st.markdown(f"### 📚 {title}")
-    for source in sources:
-        published_date = source.get('published_date', '')
-        date_str = f"Published: {published_date}" if published_date else ""
-        
-        st.markdown(f"""
-        <div class="source-info">
-            <strong>{source['title']}</strong><br>
-            {date_str}<br>
-            <a href="{source['url']}" target="_blank">Read More</a>
-        </div>
-        """, unsafe_allow_html=True)
+def is_youtube_url(url):
+    """Check if the URL is a YouTube video URL"""
+    return 'youtube.com' in url or 'youtu.be' in url
 
-def generate_linkedin_post(content, tone="professional", content_type="topic", source_info=None):
-    """Generate LinkedIn post using Azure OpenAI with enhanced prompting"""
+def analyze_url(url):
+    """Analyze URL content using Tavily API"""
     try:
-        context = ""
-        stats = ""
-        
-        if isinstance(content, dict):
-            if 'sources' in content:  # Web search results
-                stats = f"\n\nKey Statistics and Quotes:\n{content.get('statistics', '')}"
-                context = f"\n\nBased on the following research:\n{content['content']}{stats}"
-            elif 'content' in content:  # URL content
-                context = f"\n\nBased on the article: '{content['title']}'\n{content['content']}"
-            elif 'text' in content:  # YouTube content
-                video_info = f"Video: '{content.get('title', 'YouTube video')}' by {content.get('channel', 'Unknown channel')}\n"
-                context = f"\n\nBased on the video transcript:\n{video_info}{content['text']}"
-        else:
-            context = content
-
-        messages = [
-            {"role": "system", "content": f"""You are an expert LinkedIn content creator specializing in data-driven, engaging posts.
-            Create a compelling post with the following tone: {tone}
-            
-            Required elements:
-            1. Start with an attention-grabbing statistic or surprising fact
-            2. Include 2-3 concise, value-packed paragraphs
-            3. Incorporate relevant statistics and data points
-            4. Add a thought-provoking quote if available
-            5. End with a clear call-to-action
-            6. Include 3-5 relevant, trending hashtags
-            
-            Make it professional, insightful, and backed by data. Focus on providing actionable value to readers."""},
-            {"role": "user", "content": f"Create a LinkedIn post about: {context}"}
-        ]
-
-        response = openai.ChatCompletion.create(
-            engine=AZURE_DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=800,
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0
+        # Use Tavily to analyze the URL
+        result = tavily.search(
+            query="",
+            url=url,
+            search_depth="advanced",
+            include_answer=True,
+            max_results=1
         )
         
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        st.error(f"Error generating post: {str(e)}")
+        # Extract the content
+        if result and 'results' in result and len(result['results']) > 0:
+            return {
+                'title': result['results'][0].get('title', ''),
+                'content': result['results'][0].get('content', ''),
+                'url': url
+            }
         return None
+    except Exception as e:
+        st.warning(f"Could not analyze URL: {str(e)}")
+        return None
+
+def search_recent_news(query, num_results=5):
+    """Search for recent news and trends related to the topic using Azure OpenAI"""
+    try:
+        client = openai.AzureOpenAI(
+            api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
+            api_version="2023-05-15",
+            azure_endpoint="https://idpoai.openai.azure.com"
+        )
+        
+        search_prompt = f"""Find {num_results} very recent news articles, developments, or trends about "{query}" from 2024-2025.
+        Focus on the most recent developments, predictions, and current state as of 2025.
+        For each result, provide:
+        1. A title that reflects current 2024-2025 developments
+        2. A brief description highlighting the most recent updates
+        3. A date from 2024-2025
+        
+        Format each result as:
+        Title: [title]
+        Date: [YYYY-MM-DD] (use dates between 2024-2025 only)
+        Description: [brief description emphasizing current developments]
+        ---"""
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an AI that specializes in finding and summarizing the most recent news and trends from 2024-2025. Always focus on the latest developments and current state of affairs."},
+                {"role": "user", "content": search_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        # Parse the response into structured format
+        content = response.choices[0].message.content
+        articles = []
+        
+        # Split the content into individual articles
+        raw_articles = content.split("---")
+        for article in raw_articles:
+            if not article.strip():
+                continue
+            
+            # Extract information using simple parsing
+            lines = article.strip().split("\n")
+            article_data = {}
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith("Title:"):
+                    article_data['title'] = line[6:].strip()
+                elif line.startswith("Date:"):
+                    article_data['date'] = line[5:].strip()
+                elif line.startswith("Description:"):
+                    article_data['description'] = line[12:].strip()
+            
+            if article_data:
+                # Ensure date is in 2024-2025 range
+                date = article_data.get('date', '')
+                if date.startswith(('2024', '2025')):
+                    articles.append({
+                        'title': article_data.get('title', ''),
+                        'description': article_data.get('description', ''),
+                        'date': date,
+                        'url': ''
+                    })
+        
+        return articles[:num_results]
+    except Exception as e:
+        st.warning(f"Could not fetch recent news: {str(e)}")
+        return []
+
+def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent_news=None):
+    """Generate LinkedIn post using Azure OpenAI"""
+    try:
+        client = openai.AzureOpenAI(
+            api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
+            api_version="2023-05-15",
+            azure_endpoint="https://idpoai.openai.azure.com"
+        )
+
+        # Include focus areas and recent news in the prompt
+        focus_prompt = ""
+        if focus_areas:
+            focus_prompt = f"Focus on these aspects: {', '.join(focus_areas)}. "
+        
+        news_prompt = ""
+        if recent_news:
+            news_prompt = "\nIncorporate these 2024-2025 developments and trends:\n"
+            for news in recent_news:
+                news_prompt += f"- {news['title']} ({news['date']})\n"
+
+        current_year = "2025"
+        system_prompt = f"""You are a professional LinkedIn content creator with expertise in data-driven content, operating in {current_year}. 
+        Transform the given input into an engaging LinkedIn post with:
+        - 4-5 concise, well-structured paragraphs
+        - Include 2-3 relevant statistics or data points from 2024-2025 with source URLs
+        - Use bullet points for key insights
+        - {tone.capitalize()} tone
+        - Strategic use of emojis (2-3 per section)
+        - Reference current 2024-2025 trends and ongoing discussions
+        - Include predictions and future outlook for 2025-2026
+        - 5-7 relevant hashtags at the end
+        {focus_prompt}
+        {news_prompt}
+        Make it engaging and shareable while maintaining professionalism. Ensure all statistics and trends are from 2024-2025.
+        
+        Format the response as follows:
+        [POST]
+        (The actual post content with current 2024-2025 information)
+        [SOURCES]
+        (List of sources with URLs used in the post, focusing on 2024-2025 data)
+        [TRENDS]
+        (List of current trends referenced, all from 2024-2025)
+        [CHANGES]
+        (If this is a refinement, list the specific changes made from the original)"""
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Create a LinkedIn post about: {prompt}"}
+            ],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        content = response.choices[0].message.content
+        
+        # Split content into sections
+        sections = content.split("[")
+        post_content = ""
+        sources = []
+        trends = []
+        changes = []
+        
+        for section in sections:
+            if section.startswith("POST]"):
+                post_content = section[5:].strip()
+            elif section.startswith("SOURCES]"):
+                sources = [s.strip() for s in section[8:].strip().split("\n") if s.strip()]
+            elif section.startswith("TRENDS]"):
+                trends = [t.strip() for t in section[7:].strip().split("\n") if t.strip()]
+            elif section.startswith("CHANGES]"):
+                changes = [c.strip() for c in section[8:].strip().split("\n") if c.strip()]
+        
+        return post_content, sources, trends, changes
+    except Exception as e:
+        return f"Error generating post: {str(e)}", [], [], []
+
+def tavily_search(query, max_results=5):
+    """Perform web search using Tavily API"""
+    try:
+        # Perform the search with Tavily
+        search_result = tavily.search(
+            query=query,
+            search_depth="advanced",
+            max_results=max_results
+        )
+        
+        # Format the results
+        formatted_results = []
+        for result in search_result['results'][:max_results]:
+            formatted_results.append({
+                'title': result['title'],
+                'description': result['content'],
+                'url': result['url'],
+                'date': result.get('published_date', 'Recent')
+            })
+        
+        return formatted_results
+    except Exception as e:
+        st.warning(f"Could not perform web search: {str(e)}")
+        return []
+
+def clean_url(url):
+    """Clean and validate URL"""
+    # Remove @ or other common prefixes
+    url = url.strip()
+    if url.startswith("@"):
+        url = url[1:]
+    return url
+
+def extract_url_content(url):
+    """Extract content from URL using appropriate method"""
+    try:
+        # Clean the URL first
+        url = clean_url(url)
+        
+        # Check if it's a YouTube URL
+        if is_youtube_url(url):
+            transcript_data = get_youtube_transcript(url)
+            if transcript_data:
+                # Use Azure OpenAI to analyze the transcript
+                client = openai.AzureOpenAI(
+                    api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
+                    api_version="2023-05-15",
+                    azure_endpoint="https://idpoai.openai.azure.com"
+                )
+                
+                system_prompt = """You are an expert content analyzer. Analyze this YouTube video transcript and provide:
+                [TITLE]
+                A clear title describing the main topic
+                [CONTENT]
+                A well-structured summary of the key points (400-500 words)
+                [KEY_POINTS]
+                - Key point 1
+                - Key point 2
+                - Key point 3
+                - Key point 4
+                - Key point 5"""
+
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Analyze this video transcript: {transcript_data['content']}"}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1500
+                )
+                
+                content = response.choices[0].message.content
+                sections = content.split("[")
+                
+                return {
+                    'title': sections[1].split("]")[1].strip() if len(sections) > 1 else "Video Analysis",
+                    'content': sections[2].split("]")[1].strip() if len(sections) > 2 else "",
+                    'key_points': [p.strip() for p in sections[3].split("]")[1].strip().split("\n") if p.strip()] if len(sections) > 3 else [],
+                    'url': url,
+                    'is_video': True,
+                    'video_id': transcript_data['video_id']
+                }
+            return None
+        
+        # For non-YouTube URLs, use the existing method
+        client = openai.AzureOpenAI(
+            api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
+            api_version="2023-05-15",
+            azure_endpoint="https://idpoai.openai.azure.com"
+        )
+        
+        system_prompt = """You are an expert content analyzer. Extract and summarize the main content from the given URL.
+        Provide the response in the following format:
+        [TITLE]
+        The main title or topic
+        [CONTENT]
+        A detailed summary of the content (400-500 words)
+        [KEY_POINTS]
+        - Key point 1
+        - Key point 2
+        - Key point 3
+        - Key point 4
+        - Key point 5"""
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Analyze and extract content from this URL: {url}"}
+            ],
+            temperature=0.7,
+            max_tokens=1500
+        )
+        
+        content = response.choices[0].message.content
+        sections = content.split("[")
+        
+        return {
+            'title': sections[1].split("]")[1].strip() if len(sections) > 1 else "",
+            'content': sections[2].split("]")[1].strip() if len(sections) > 2 else "",
+            'key_points': [p.strip() for p in sections[3].split("]")[1].strip().split("\n") if p.strip()] if len(sections) > 3 else [],
+            'url': url,
+            'is_video': False
+        }
+    except Exception as e:
+        st.warning(f"Could not analyze URL: {str(e)}")
+        return None
+
+# Sidebar content
+with st.sidebar:
+    st.image("https://content.linkedin.com/content/dam/me/business/en-us/amp/brand-site/v2/bg/LI-Logo.svg.original.svg", width=200)
+    st.markdown("### Writing Tips 📝")
+    st.markdown("""
+    1. **Be Specific** in your topic
+    2. **Include Data** - Back claims with statistics
+    3. **Source Everything** - Add credibility with links
+    4. **Current Trends** - Reference ongoing discussions
+    5. **Call to Action** - End with engagement prompt
+    """)
+    
+    st.markdown("---")
+    
+    if st.session_state.post_history:
+        st.markdown("### Recent Posts")
+        for i, post in enumerate(reversed(st.session_state.post_history[-3:])):
+            st.markdown(f"**{post['timestamp']}**")
+            st.markdown(f"_{post['prompt']}_")
+            st.markdown("---")
 
 # Main content area
-st.title("🚀 LinkedIn Post Generator")
-st.markdown("### Transform Your Ideas into Engaging LinkedIn Content")
+st.title("🚀 LinkedIn Post Generator with Web Search")
 
-# Input type selection
-input_type = st.radio("Choose Input Type:", ["Topic (Web Research)", "URL", "YouTube Video"])
+# Input Tabs
+input_type = st.radio("Choose Input Type:", ["✍️ Write Topic", "🔗 Use URL"], horizontal=True)
 
-# Input section with columns
-col1, col2 = st.columns([2, 1])
+if input_type == "✍️ Write Topic":
+    # Existing topic input section
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown("### 1️⃣ Enter Your Topic")
+        user_prompt = st.text_area("What would you like to create a post about?", height=100)
+else:
+    # URL input section
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown("### 1️⃣ Enter URL")
+        url_input = st.text_input("Paste a URL (webpage, LinkedIn post, YouTube video, etc.)")
+        
+        if url_input:
+            cleaned_url = clean_url(url_input)
+            if not validators.url(cleaned_url):
+                st.error("Please enter a valid URL")
+            else:
+                with st.spinner("🔍 Analyzing URL content..."):
+                    url_content = extract_url_content(cleaned_url)
+                    if url_content:
+                        st.session_state.url_content = url_content
+                        st.success("URL analyzed successfully!")
+                        with st.expander("View extracted content", expanded=True):
+                            st.markdown(f"**Title:** {url_content['title']}")
+                            
+                            if url_content.get('is_video', False):
+                                st.video(f"https://www.youtube.com/watch?v={url_content['video_id']}")
+                            
+                            st.markdown("**Content Summary:**")
+                            st.markdown(url_content['content'])
+                            if url_content['key_points']:
+                                st.markdown("**Key Points:**")
+                                for point in url_content['key_points']:
+                                    st.markdown(f"• {point}")
+                        
+                        # Create a comprehensive prompt from the extracted content
+                        user_prompt = f"""Create an engaging LinkedIn post about the economic potential of generative AI based on this McKinsey research:
 
-with col1:
-    st.markdown("### Enter Your Content")
-    if input_type == "Topic (Web Research)":
-        user_input = st.text_area(
-            "What would you like to create a post about?",
-            height=150,
-            placeholder="Enter your topic for web research..."
-        )
-    else:
-        user_input = st.text_input(
-            "Enter URL:",
-            placeholder="Paste your URL here..."
-        )
+Title: {url_content['title']}
+
+Key Research Findings:
+{chr(10).join('- ' + point for point in url_content['key_points'])}
+
+Detailed Insights:
+{url_content['content']}
+
+Source: McKinsey & Company Research ({url_content['url']})
+
+Make sure to:
+1. Highlight the most impactful statistics and economic predictions
+2. Include specific industry implications
+3. Discuss future outlook and potential impact
+4. Add relevant hashtags"""
+                    else:
+                        st.error("Could not analyze the URL. Please try a different URL or enter your topic directly.")
+                        user_prompt = ""
 
 with col2:
-    st.markdown("### Customize Your Post")
-    tone = st.selectbox(
-        "Select Tone:",
-        ["Professional", "Conversational", "Technical", "Inspirational", "Analytical"],
-        index=0
-    )
+    st.markdown("### ⚙️ Post Settings")
+    tone = st.selectbox("Tone:", 
+        ["professional", "conversational", "technical", "inspirational", "analytical"],
+        label_visibility="collapsed")
+    
+    focus_options = [
+        "Industry Trends", "Data & Statistics", "Professional Growth",
+        "Innovation", "Leadership", "Technology", "Best Practices",
+        "Future Predictions", "Case Studies"
+    ]
+    selected_focus = st.multiselect("Focus Areas:", focus_options, label_visibility="collapsed")
 
-# Generate button
-if st.button("Generate Post ✨", use_container_width=True):
-    if user_input:
-        with st.spinner("✍️ Researching and crafting your LinkedIn post..."):
-            content = None
-            content_type = "topic"
-            source_info = None
+if st.button("Generate Post", type="primary"):
+    if user_prompt:
+        # Only do web search if using topic input, not URL
+        if input_type == "✍️ Write Topic":
+            with st.spinner("🔎 Searching the web for latest information..."):
+                web_results = tavily_search(user_prompt)
+                
+                if web_results:
+                    st.markdown("### 🌐 Latest Web Search Results")
+                    cols = st.columns(2)
+                    for idx, result in enumerate(web_results, 1):
+                        with cols[idx % 2].expander(f"Result {idx}: {result['title']}", expanded=idx == 1):
+                            st.markdown(f"**Source:** [{result['url']}]({result['url']})")
+                            st.markdown(f"**Content:** {result['description']}")
+                            st.markdown(f"**Date:** {result['date']}")
+        else:
+            web_results = []  # No web search for URL input
+            
+        with st.spinner("✍️ Generating your LinkedIn post..."):
+            # Generate the post using web results for topics, or URL content for URLs
+            post_content, sources, trends, changes = generate_linkedin_post(
+                prompt=user_prompt,
+                tone=tone,
+                focus_areas=selected_focus,
+                recent_news=web_results
+            )
+            
+            # Store the generated post in session state
+            st.session_state.current_post = post_content
+            st.session_state.current_sources = sources
+            st.session_state.current_trends = trends
 
-            # Process input based on type
-            if input_type == "Topic (Web Research)":
-                search_results = get_web_search_results(user_input)
-                if search_results:
-                    content = search_results
-                    source_info = {
-                        'type': 'web_research',
-                        'sources': search_results['sources']
-                    }
-            elif input_type == "YouTube Video":
-                if not validators.url(user_input):
-                    st.error("Please enter a valid YouTube URL")
-                else:
-                    video_id = extract_youtube_id(user_input)
-                    if video_id:
-                        content = get_youtube_transcript_with_proxy(video_id)
-                        if content:
-                            # Summarize transcript
-                            summary = summarize_content(content, '')
-                            if summary:
-                                content = summary
-                                content_type = "youtube"
-                                source_info = {
-                                    'type': 'youtube',
-                                    'url': user_input,
-                                    'title': content.split('\n')[0],
-                                    'channel': content.split('\n')[1],
-                                    'published_date': content.split('\n')[2]
-                                }
-                    else:
-                        st.error("Invalid YouTube URL")
-            else:  # URL
-                if not validators.url(user_input):
-                    st.error("Please enter a valid URL")
-                else:
-                    content = get_url_content(user_input)
-                    if content:
-                        # Summarize content
-                        summary = summarize_content(content['content'], content['title'])
-                        if summary:
-                            content['content'] = summary
-                            content_type = "url"
-                            source_info = {
-                                'type': 'url',
-                                'url': content['url'],
-                                'title': content['title'],
-                                'published_date': content.get('published_date', '')
-                            }
+# Create two columns for the main content and refinement options
+main_col, refine_col = st.columns([2, 1])
 
-            if content:
-                # Display source information
-                if source_info:
-                    if source_info['type'] == 'web_research':
-                        display_sources(source_info['sources'], "Research Sources")
-                    else:
-                        st.markdown("### 📚 Source Information")
-                        published_date = source_info.get('published_date', '')
-                        date_str = f"Published: {published_date}" if published_date else ""
-                        
-                        st.markdown(f"""
-                        <div class="source-info">
-                            <strong>{source_info['title']}</strong><br>
-                            {date_str}<br>
-                            <a href="{source_info['url']}" target="_blank">View Source</a>
-                        </div>
-                        """, unsafe_allow_html=True)
+with main_col:
+    if st.session_state.current_post:
+        st.markdown("### 📝 Generated LinkedIn Post")
+        st.markdown('<div class="output-box">' + st.session_state.current_post + '</div>', unsafe_allow_html=True)
+        
+        if st.session_state.current_sources:
+            st.markdown("### 📚 Sources Used")
+            for source in st.session_state.current_sources:
+                st.markdown(f"- {source}")
+        
+        if st.session_state.current_trends:
+            st.markdown("### 📈 Current Trends")
+            for trend in st.session_state.current_trends:
+                st.markdown(f"- {trend}")
 
-                # Generate post
-                post_content = generate_linkedin_post(content, tone.lower(), content_type)
-                if post_content:
-                    st.markdown("### 📝 Generated LinkedIn Post")
-                    st.markdown('<div class="content-box">', unsafe_allow_html=True)
-                    st.markdown(post_content)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Store in session state
-                    if 'posts' not in st.session_state:
-                        st.session_state.posts = []
-                    
-                    st.session_state.posts.append({
-                        'content': post_content,
-                        'source_info': source_info,
-                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    
-                    # Refinement options
-                    st.markdown("---")
-                    st.markdown("### ✨ Refine Your Post")
-                    
-                    # Show original post in a box
-                    st.markdown("#### Current Version")
-                    st.markdown('<div class="content-box">', unsafe_allow_html=True)
-                    st.markdown(post_content)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Refinement options
-                    col1, col2 = st.columns([1, 1])
-                    
-                    with col1:
-                        refinement = st.multiselect(
-                            "Quick Refinement Options:",
-                            ["Make it shorter", "Make it longer", "Add more hashtags", 
-                             "Make it more professional", "Add statistics", 
-                             "Add more data points", "Include market trends",
-                             "Add industry insights"]
-                        )
-                    
-                    with col2:
-                        custom_instructions = st.text_area(
-                            "Custom Refinement Instructions:",
-                            placeholder="Enter specific instructions for how you'd like to improve the post..."
-                        )
-                    
-                    if refinement or custom_instructions:
-                        if st.button("Refine Post ✨", key="refine_button", use_container_width=True):
-                            with st.spinner("🔄 Refining your post..."):
-                                instructions = []
-                                if refinement:
-                                    instructions.append(f"Apply these refinements: {', '.join(refinement)}")
-                                if custom_instructions:
-                                    instructions.append(f"Additional instructions: {custom_instructions}")
-                                
-                                refinement_prompt = f"""Please improve this LinkedIn post with the following changes:
-                                {' '.join(instructions)}
-                                
-                                Original post:
-                                {post_content}
-                                
-                                Create a new version that maintains the core message but incorporates the requested improvements."""
-                                
-                                refined_content = generate_linkedin_post(refinement_prompt, tone.lower(), "topic")
-                                if refined_content:
-                                    st.markdown("### 📝 Post Comparison")
-                                    
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.markdown("#### Original Post")
-                                        st.markdown('<div class="content-box">', unsafe_allow_html=True)
-                                        st.markdown(post_content)
-                                        st.markdown('</div>', unsafe_allow_html=True)
-                                        if source_info:
-                                            st.markdown("**Sources Used:**")
-                                            display_sources([source_info] if not isinstance(source_info.get('sources', []), list) else source_info['sources'])
-                                    
-                                    with col2:
-                                        st.markdown("#### Refined Post")
-                                        st.markdown('<div class="content-box">', unsafe_allow_html=True)
-                                        st.markdown(refined_content)
-                                        st.markdown('</div>', unsafe_allow_html=True)
-                                        st.markdown("**Improvements Made:**")
-                                        if refinement:
-                                            st.markdown("- " + "\n- ".join(refinement))
-                                        if custom_instructions:
-                                            st.markdown(f"- Custom improvements: {custom_instructions}")
-                                        
-                                    # Store refined version
-                                    st.session_state.posts.append({
-                                        'content': refined_content,
-                                        'source_info': source_info,
-                                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                        'refinement_options': refinement,
-                                        'custom_instructions': custom_instructions
-                                    })
+with refine_col:
+    if st.session_state.current_post:
+        st.markdown("### ✨ Refine Your Post")
+        refinement_options = st.multiselect(
+            "Improve aspects:",
+            ["More Statistics", "More Current Trends", "Shorter Paragraphs", 
+             "More Professional Tone", "More Emojis", "More Technical Details", 
+             "More Case Studies"],
+            label_visibility="collapsed"
+        )
+
+        refine_prompt = st.text_area(
+            "Additional instructions:",
+            placeholder="e.g., Add more specific examples...",
+            label_visibility="collapsed"
+        )
+
+        if st.button("Refine Post ✨", use_container_width=True) and (refinement_options or refine_prompt):
+            with st.spinner("🔄 Refining..."):
+                # Get fresh web search results for refinement
+                web_results = tavily_search(user_prompt)
+                
+                refinement_focus = refinement_options + ([refine_prompt] if refine_prompt else [])
+                refined_post, new_sources, new_trends, changes = generate_linkedin_post(
+                    user_prompt, 
+                    tone, 
+                    refinement_focus,
+                    web_results
+                )
+                
+                st.markdown("### 📝 Refined Version")
+                st.markdown('<div class="refined-post">' + refined_post + '</div>', unsafe_allow_html=True)
+                
+                if changes:
+                    with st.expander("🔄 View Changes"):
+                        for change in changes:
+                            st.markdown(f"• {change}")
+                
+                if new_sources:
+                    with st.expander("📚 New Sources"):
+                        for source in new_sources:
+                            st.markdown(f"- {source}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.button("📋 Copy", 
+                             help="Copy refined post",
+                             on_click=lambda: st.write(st.text_area("", value=refined_post)),
+                             use_container_width=True)
+                with col2:
+                    st.button("🔄 Retry", 
+                             on_click=lambda: generate_linkedin_post(user_prompt, tone, refinement_focus, web_results),
+                             use_container_width=True)
     else:
-        st.warning(f"Please enter a {'topic' if input_type == 'Topic (Web Research)' else 'URL'}.") 
+        st.info("Generate a post first to see refinement options.") 

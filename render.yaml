@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: linkedin-post-generator
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run "Linkedin Agent test/app.py"
+    envVars:
+      - key: AZURE_API_KEY
+        value: d2fc3cb33a1046b5936b9d9995322f2d
+      - key: TAVILY_API_KEY
+        value: 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 
