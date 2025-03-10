@@ -25,6 +25,9 @@ openai.api_key = AZURE_API_KEY
 openai.api_base = AZURE_ENDPOINT
 openai.api_version = "2023-05-15"  # Azure OpenAI version
 
+# Azure OpenAI Deployment Name
+AZURE_DEPLOYMENT_NAME = "gpt-4o"
+
 # Page configuration
 st.set_page_config(
     page_title="LinkedIn Post Generator",
@@ -99,7 +102,7 @@ def generate_linkedin_post(content, tone="professional", content_type="topic"):
         prompt = f"System: {system_prompt}\n\nUser: Create a LinkedIn post about: {content}{context}"
 
         response = openai.Completion.create(
-            engine="gpt-4",
+            engine=AZURE_DEPLOYMENT_NAME,  # Using the Azure deployment name
             prompt=prompt,
             temperature=0.7,
             max_tokens=800,
