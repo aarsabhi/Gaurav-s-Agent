@@ -23,7 +23,7 @@ tavily = TavilyClient(api_key=TAVILY_API_KEY)
 openai.api_type = "azure"
 openai.api_key = AZURE_API_KEY
 openai.api_base = AZURE_ENDPOINT
-openai.api_version = "2023-05-15"  # Azure OpenAI version
+openai.api_version = "2023-07-01-preview"  # Updated API version for chat models
 
 # Azure OpenAI Deployment Name
 AZURE_DEPLOYMENT_NAME = "gpt-4o"
@@ -89,21 +89,22 @@ def generate_linkedin_post(content, tone="professional", content_type="topic"):
         elif content_type == "youtube":
             context = f"\n\nBased on the following video transcript:\n{content}"
 
-        system_prompt = f"""You are a professional LinkedIn content creator. 
-        Create an engaging post with the following tone: {tone}
-        Include:
-        - 3-4 concise paragraphs
-        - Engaging opening hook
-        - Professional insights
-        - Call to action
-        - 3-5 relevant hashtags
-        Make it engaging while maintaining professionalism."""
+        messages = [
+            {"role": "system", "content": f"""You are a professional LinkedIn content creator. 
+            Create an engaging post with the following tone: {tone}
+            Include:
+            - 3-4 concise paragraphs
+            - Engaging opening hook
+            - Professional insights
+            - Call to action
+            - 3-5 relevant hashtags
+            Make it engaging while maintaining professionalism."""},
+            {"role": "user", "content": f"Create a LinkedIn post about: {content}{context}"}
+        ]
 
-        prompt = f"System: {system_prompt}\n\nUser: Create a LinkedIn post about: {content}{context}"
-
-        response = openai.Completion.create(
-            engine=AZURE_DEPLOYMENT_NAME,  # Using the Azure deployment name
-            prompt=prompt,
+        response = openai.ChatCompletion.create(
+            engine=AZURE_DEPLOYMENT_NAME,
+            messages=messages,
             temperature=0.7,
             max_tokens=800,
             top_p=1,
@@ -111,7 +112,7 @@ def generate_linkedin_post(content, tone="professional", content_type="topic"):
             presence_penalty=0
         )
         
-        return response.choices[0].text.strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"Error generating post: {str(e)}")
         return None
