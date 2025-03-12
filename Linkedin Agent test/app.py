@@ -1,35 +1,27 @@
 import streamlit as st
+from dotenv import load_dotenv
 import openai
-from datetime import datetime, timedelta
+from datetime import datetime
 import emoji
 import os
-from dotenv import load_dotenv
 import json
 from tavily import TavilyClient
 import validators
-from youtube_transcript_api import YouTubeTranscriptApi
 import re
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-import html
 
-# Load environment variables
-load_dotenv()
-
-# Initialize YouTube API client
-YOUTUBE_API_KEY = "AIzaSyBtgp091vOqZumrKYXoD1Rl1-vqF4lKgGs"  # Replace with your API key
-youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-
-# Initialize Tavily client
-tavily = TavilyClient(api_key="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")
-
-# Page configuration
+# Page configuration must be the first Streamlit command
 st.set_page_config(
     page_title="LinkedIn Post Generator",
     page_icon="📝",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Load environment variables
+load_dotenv()
+
+# Initialize Tavily client
+tavily = TavilyClient(api_key="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")
 
 # Custom CSS with added comparison styles
 st.markdown("""
@@ -238,26 +230,40 @@ Description:
 
 def is_youtube_url(url):
     """Check if the URL is a YouTube video URL"""
-    return 'youtube.com' in url or 'youtu.be' in url
+    return False  # YouTube functionality removed
 
 def analyze_url(url):
     """Analyze URL content using Tavily API"""
     try:
-        # Use Tavily to analyze the URL
+        # Use Tavily to analyze the URL with focus on recent content
         result = tavily.search(
-            query="",
+            query="latest developments current trends 2024 2025",
             url=url,
             search_depth="advanced",
             include_answer=True,
-            max_results=1
+            max_results=3,
+            sort_by="date"
         )
         
         # Extract the content
         if result and 'results' in result and len(result['results']) > 0:
+            # Try to find the most recent content
+            most_recent = None
+            for item in result['results']:
+                content = item.get('content', '').lower()
+                if '2024' in content or '2025' in content:
+                    most_recent = item
+                    break
+            
+            # If no recent content found, use the first result
+            if not most_recent:
+                most_recent = result['results'][0]
+            
             return {
-                'title': result['results'][0].get('title', ''),
-                'content': result['results'][0].get('content', ''),
-                'url': url
+                'title': most_recent.get('title', ''),
+                'content': most_recent.get('content', ''),
+                'url': url,
+                'date': most_recent.get('published_date', 'Recent')
             }
         return None
     except Exception as e:
@@ -351,40 +357,54 @@ def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent
         
         news_prompt = ""
         if recent_news:
-            news_prompt = "\nIncorporate these 2024-2025 developments and trends:\n"
+            news_prompt = "\nIncorporate these recent developments and trends:\n"
             for news in recent_news:
                 news_prompt += f"- {news['title']} ({news['date']})\n"
 
-        current_year = "2025"
-        system_prompt = f"""You are a professional LinkedIn content creator with expertise in data-driven content, operating in {current_year}. 
-        Transform the given input into an engaging LinkedIn post with:
-        - 4-5 concise, well-structured paragraphs
-        - Include 2-3 relevant statistics or data points from 2024-2025 with source URLs
-        - Use bullet points for key insights
-        - {tone.capitalize()} tone
-        - Strategic use of emojis (2-3 per section)
-        - Reference current 2024-2025 trends and ongoing discussions
-        - Include predictions and future outlook for 2025-2026
-        - 5-7 relevant hashtags at the end
+        system_prompt = f"""You are a professional LinkedIn content creator and thought leader. Create an engaging, data-driven post that demonstrates expertise and sparks meaningful discussions.
+
+        Transform the input into a LinkedIn post with these elements:
+        1. 🎯 Strong Hook (First Line):
+           - Start with a powerful statistic, question, or statement
+           - Use emojis strategically to grab attention
+        
+        2. 📊 Main Content (2-3 Paragraphs):
+           - Include 2-3 recent statistics or data points with sources
+           - Break down complex ideas into bullet points
+           - Use the {tone} tone throughout
+           - Add relevant emojis to key points (1-2 per paragraph)
+        
+        3. 💡 Value Addition:
+           - Share practical insights or actionable takeaways
+           - Include industry trends and predictions
+           - Reference current developments
+        
+        4. 🤝 Engagement Hook:
+           - End with a thought-provoking question
+           - Encourage meaningful discussions
+           - Call for sharing experiences
+        
+        5. #️⃣ Hashtags:
+           - Add 5-7 relevant, trending hashtags
+        
         {focus_prompt}
         {news_prompt}
-        Make it engaging and shareable while maintaining professionalism. Ensure all statistics and trends are from 2024-2025.
         
         Format the response as follows:
         [POST]
-        (The actual post content with current 2024-2025 information)
+        The actual post content
         [SOURCES]
-        (List of sources with URLs used in the post, focusing on 2024-2025 data)
+        List of sources with URLs
         [TRENDS]
-        (List of current trends referenced, all from 2024-2025)
+        List of trends referenced
         [CHANGES]
-        (If this is a refinement, list the specific changes made from the original)"""
+        List of improvements made (if this is a refinement)"""
 
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Create a LinkedIn post about: {prompt}"}
+                {"role": "user", "content": f"Create an engaging LinkedIn post about: {prompt}"}
             ],
             temperature=0.7,
             max_tokens=1000
@@ -409,6 +429,10 @@ def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent
             elif section.startswith("CHANGES]"):
                 changes = [c.strip() for c in section[8:].strip().split("\n") if c.strip()]
         
+        # Store the original post if this is not a refinement
+        if not focus_areas and not recent_news:
+            st.session_state.original_post = post_content
+        
         return post_content, sources, trends, changes
     except Exception as e:
         return f"Error generating post: {str(e)}", [], [], []
@@ -416,31 +440,60 @@ def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent
 def tavily_search(query, max_results=5):
     """Perform web search using Tavily API"""
     try:
+        # Add time-based context to the query
+        current_year = datetime.now().year
+        time_aware_query = f"{query} {current_year} breaking news latest developments"
+        
         # Perform the search with Tavily
         search_result = tavily.search(
-            query=query,
+            query=time_aware_query,
             search_depth="advanced",
-            max_results=max_results
+            max_results=max_results * 2,  # Request more results to filter
+            sort_by="date",  # Sort by date to get newest first
+            search_type="news",  # Specifically search for news
+            include_domains=[
+                "timesofindia.indiatimes.com",
+                "ndtv.com",
+                "indianexpress.com",
+                "hindustantimes.com",
+                "news18.com",
+                "thehindu.com",
+                "reuters.com",
+                "bloomberg.com"
+            ]
         )
         
-        # Format the results
+        # Format and filter the results
         formatted_results = []
-        for result in search_result['results'][:max_results]:
+        for result in search_result.get('results', []):
+            # Try to extract date information
+            published_date = result.get('published_date', '')
+            if not published_date:
+                # Try to find date in content
+                content = result.get('content', '').lower()
+                title = result.get('title', '').lower()
+                date_match = re.search(r'\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+202[4-5]\b', 
+                                     content + ' ' + title, 
+                                     re.IGNORECASE)
+                if date_match:
+                    published_date = date_match.group(0)
+            
             formatted_results.append({
                 'title': result['title'],
                 'description': result['content'],
                 'url': result['url'],
-                'date': result.get('published_date', 'Recent')
+                'date': published_date or 'Recent'
             })
         
-        return formatted_results
+        # Sort by date (newest first) and return the requested number of results
+        formatted_results.sort(key=lambda x: x['date'] if x['date'] != 'Recent' else '', reverse=True)
+        return formatted_results[:max_results]
     except Exception as e:
         st.warning(f"Could not perform web search: {str(e)}")
         return []
 
 def clean_url(url):
     """Clean and validate URL"""
-    # Remove @ or other common prefixes
     url = url.strip()
     if url.startswith("@"):
         url = url[1:]
@@ -452,57 +505,7 @@ def extract_url_content(url):
         # Clean the URL first
         url = clean_url(url)
         
-        # Check if it's a YouTube URL
-        if is_youtube_url(url):
-            with st.spinner("📺 Analyzing YouTube video..."):
-                video_content = get_youtube_content(url)
-                if video_content:
-                    # Use Azure OpenAI to analyze the content
-                    client = openai.AzureOpenAI(
-                        api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
-                        api_version="2023-05-15",
-                        azure_endpoint="https://idpoai.openai.azure.com"
-                    )
-                    
-                    system_prompt = """You are an expert content analyzer. Analyze this YouTube video content and provide:
-                    [TITLE]
-                    A clear title describing the main topic
-                    [CONTENT]
-                    A well-structured summary of the main points and key insights (400-500 words)
-                    [KEY_POINTS]
-                    - Key point 1 (main insight or finding)
-                    - Key point 2 (important detail or example)
-                    - Key point 3 (significant statistic or fact)
-                    - Key point 4 (future implication or prediction)
-                    - Key point 5 (actionable takeaway)"""
-
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Analyze this video content:\n\n{video_content['content']}"}
-                        ],
-                        temperature=0.7,
-                        max_tokens=1500
-                    )
-                    
-                    content = response.choices[0].message.content
-                    sections = content.split("[")
-                    
-                    return {
-                        'title': sections[1].split("]")[1].strip() if len(sections) > 1 else video_content['title'],
-                        'content': sections[2].split("]")[1].strip() if len(sections) > 2 else "",
-                        'key_points': [p.strip() for p in sections[3].split("]")[1].strip().split("\n") if p.strip()] if len(sections) > 3 else [],
-                        'url': url,
-                        'is_video': True,
-                        'video_id': video_content['video_id'],
-                        'channel': video_content['channel'],
-                        'views': video_content['views'],
-                        'likes': video_content['likes']
-                    }
-                return None
-        
-        # For non-YouTube URLs, use the existing method
+        # Use Azure OpenAI to analyze the content
         client = openai.AzureOpenAI(
             api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
             api_version="2023-05-15",
