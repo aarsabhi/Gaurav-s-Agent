@@ -11,7 +11,7 @@ import re
 
 # Page configuration must be the first Streamlit command
 st.set_page_config(
-    page_title="LinkedIn Post Generator",
+    page_title="Gaurav's LinkedIn Agent",
     page_icon="📝",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -571,7 +571,7 @@ with st.sidebar:
             st.markdown("---")
 
 # Main content area
-st.title("🚀 LinkedIn Post Generator with Web Search")
+st.title("🚀 Gaurav's LinkedIn Agent")
 
 # Input Tabs
 input_type = st.radio("Choose Input Type:", ["✍️ Write Topic", "🔗 Use URL"], horizontal=True)
@@ -587,7 +587,7 @@ else:
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("### 1️⃣ Enter URL")
-        url_input = st.text_input("Paste a URL (webpage, LinkedIn post, YouTube video, etc.)")
+        url_input = st.text_input("Paste a URL (webpage, LinkedIn post, etc.)")
         
         if url_input:
             cleaned_url = clean_url(url_input)
@@ -742,13 +742,13 @@ with refine_col:
         
         col1, col2 = st.columns(2)
         with col1:
-                    st.button("📋 Copy", 
-                             help="Copy refined post",
-                             on_click=lambda: st.write(st.text_area("", value=refined_post)),
+            st.button("📋 Copy", 
+                     help="Copy refined post",
+                     on_click=lambda: st.write(st.text_area("", value=refined_post)),
                      use_container_width=True)
         with col2:
-                    st.button("🔄 Retry", 
-                             on_click=lambda: generate_linkedin_post(user_prompt, tone, refinement_focus, web_results),
+            st.button("🔄 Retry", 
+                     on_click=lambda: generate_linkedin_post(user_prompt, tone, refinement_focus, web_results),
                      use_container_width=True)
     else:
         st.info("Generate a post first to see refinement options.") 
