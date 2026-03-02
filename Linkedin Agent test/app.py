@@ -274,9 +274,9 @@ def search_recent_news(query, num_results=5):
     """Search for recent news and trends related to the topic using Azure OpenAI"""
     try:
         client = openai.AzureOpenAI(
-            api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
-            api_version="2023-05-15",
-            azure_endpoint="https://idpoai.openai.azure.com"
+            api_key=os.environ.get("AZURE_API_KEY", "b07ae056-6feb-4db0-b3d4-35d95e7cad32"),
+            api_version="2024-10-21",
+            azure_endpoint="https://genai-nexus.api.corpinter.net/apikey/openai/deployments/gpt-5/chat/completions?api-version=…"
         )
         
         search_prompt = f"""Find {num_results} very recent news articles, developments, or trends about "{query}" from 2024-2025.
@@ -345,9 +345,9 @@ def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent
     """Generate LinkedIn post using Azure OpenAI"""
     try:
         client = openai.AzureOpenAI(
-            api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
-            api_version="2023-05-15",
-            azure_endpoint="https://idpoai.openai.azure.com"
+            api_key=os.environ.get("AZURE_API_KEY", "b07ae056-6feb-4db0-b3d4-35d95e7cad32"),
+            api_version="2024-10-21",
+            azure_endpoint="https://genai-nexus.api.corpinter.net/apikey/openai/deployments/gpt-5/chat/completions?api-version=…"
         )
 
         # Include focus areas and recent news in the prompt
@@ -507,9 +507,9 @@ def extract_url_content(url):
         
         # Use Azure OpenAI to analyze the content
         client = openai.AzureOpenAI(
-            api_key=os.environ.get("AZURE_API_KEY", "d2fc3cb33a1046b5936b9d9995322f2d"),
-            api_version="2023-05-15",
-            azure_endpoint="https://idpoai.openai.azure.com"
+           api_key=os.environ.get("AZURE_API_KEY", "b07ae056-6feb-4db0-b3d4-35d95e7cad32"),
+            api_version="2024-10-21",
+            azure_endpoint="https://genai-nexus.api.corpinter.net/apikey/openai/deployments/gpt-5/chat/completions?api-version=…"
         )
         
         system_prompt = """You are an expert content analyzer. Extract and summarize the main content from the given URL.
