@@ -209,7 +209,7 @@ def search_recent_news(query, num_results=5):
                 {"role": "user", "content": search_prompt}
             ],
             temperature=0.7,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
         
         # Parse the response into structured format
@@ -303,7 +303,7 @@ def generate_linkedin_post(prompt, tone="professional", focus_areas=None, recent
                 {"role": "user", "content": f"Create a LinkedIn post about: {prompt}"}
             ],
             temperature=0.7,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
         
         content = response.choices[0].message.content
@@ -398,7 +398,7 @@ def extract_url_content(url):
                         {"role": "user", "content": f"Analyze this video transcript: {transcript_data['content']}"}
                     ],
                     temperature=0.7,
-                    max_tokens=1500
+                    max_completion_tokens=1500
                 )
                 
                 content = response.choices[0].message.content
@@ -441,7 +441,7 @@ def extract_url_content(url):
                 {"role": "user", "content": f"Analyze and extract content from this URL: {url}"}
             ],
             temperature=0.7,
-            max_tokens=1500
+            max_completion_tokens=1500
         )
         
         content = response.choices[0].message.content
